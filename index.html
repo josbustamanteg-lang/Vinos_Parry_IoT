@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Vinos Parry - Panel Monitoreo Bodega 01</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        wine: {
+                            50: '#fdf2f4',
+                            100: '#fbe6e9',
+                            200: '#f7d0d7',
+                            300: '#f0acba',
+                            400: '#e47d94',
+                            500: '#d55272',
+                            600: '#bf3456',
+                            700: '#9f2643',
+                            800: '#85233c',
+                            900: '#5c172a',
+                            950: '#3c0a18',
+                        },
+                        industrial: {
+                            800: '#1e1e24',
+                            850: '#18181c',
+                            900: '#121215',
+                            950: '#0a0a0c'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Fira Code', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- MQTT.js CDN -->
+    <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        
+        /* Custom scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #121215;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3c0a18;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #85233c;
+        }
+
+        /* Gauge progress animations */
+        .gauge-circle {
+            transition: stroke-dashoffset 0.8s ease-in-out, stroke 0.5s ease;
+        }
+        
+        /* Glassmorphism panel */
+        .glass-card {
+            background: rgba(30, 30, 36, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(133, 35, 60, 0.2);
+        }
+        .glass-card:hover {
+            border-color: rgba(191, 52, 86, 0.4);
+        }
+        
+        /* Pulsing indicator */
+        @keyframes pulse-wine {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.05); }
+        }
+        .pulse-live {
+            animation: pulse-wine 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-industrial-950 text-slate-200 font-sans min-h-screen flex flex-col selection:bg-wine-700 selection:text-white">
+
+    <!-- Header / Navbar -->
+    <header class="border-b border-wine-900/40 bg-industrial-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <!-- Brand Logo & Title -->
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-wine-600 to-wine-950 flex items-center justify-center shadow-lg shadow-wine-950/50 border border-wine-500/30">
+                    <i class="fa-solid font-wine-glass text-wine-200 text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold tracking-wide text-white flex items-center gap-2">
+                        IoT VINOS PARRY 
+                        <span class="text-xs px-2 py-0.5 rounded bg-wine-950 text-wine-300 border border-wine-800 font-mono">BODEGA 01</span>
+                    </h1>
+                    <p class="text-xs text-slate-400">Sistema de Control y Monitoreo Ambiental en Tiempo Real</p>
+                </div>
+            </div>
+
+            <!-- MQTT Connection Status Badge -->
+            <div class="flex items-center space-x-4">
+                <div id="connectionStatusBadge" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-700 text-xs font-medium text-slate-400 transition-all">
+                    <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                    <span id="statusText">Desconectado</span>
+                </div>
+                <button id="connectBtn" onclick="toggleMQTTConnection()" class="px-3.5 py-1.5 rounded-lg bg-wine-700 hover:bg-wine-600 text-white text-xs font-semibold shadow-md shadow-wine-950/40 transition-all flex items-center gap-1.5">
+                    <i class="fa-solid fa-plug text-xs"></i>
+                    <span>Conectar Broker</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+        <!-- Top Overview & Connection Controls -->
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+            
+            <!-- Connection Details Card -->
+            <div class="glass-card rounded-2xl p-4 lg:col-span-3 flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <div class="p-3 bg-wine-950/60 rounded-xl border border-wine-800/40 text-wine-400">
+                        <i class="fa-solid fa-server text-xl"></i>
+                    </div>
+                    <div>
+                        <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Broker MQTT (EMQX Cloud WSS)</div>
+                        <div class="text-sm font-mono font-medium text-slate-200">wss://udb16521.ala.us-east-1.emqxsl.com:8084/mqtt</div>
+                        <div class="text-xs text-slate-400 flex items-center gap-3 mt-1">
+                            <span><i class="fa-solid fa-user text-wine-400 mr-1"></i> Usuario: <strong class="text-slate-300 font-mono">vinospsensor</strong></span>
+                            <span><i class="fa-solid fa-folder text-wine-400 mr-1"></i> Tópico: <strong class="text-slate-300 font-mono">vinosparry/bodega01/#</strong></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Simulation Toggle Controls -->
+                <div class="flex items-center gap-3 bg-industrial-900 p-2 rounded-xl border border-slate-800">
+                    <div class="text-right">
+                        <div class="text-xs font-semibold text-slate-300">Simulador Local IoT</div>
+                        <div class="text-[10px] text-slate-500">Genera datos locales si no hay cliente Python</div>
+                    </div>
+                    <button id="simulatorBtn" onclick="toggleSimulator()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-all flex items-center gap-1 border border-slate-700">
+                        <i class="fa-solid fa-play text-wine-400 text-xs" id="simIcon"></i>
+                        <span id="simText">Iniciar Simulación</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Metrics Summary Card -->
+            <div class="glass-card rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <div class="text-xs text-slate-400 font-medium">Estado General Bodega</div>
+                    <div id="bodegaStatusText" class="text-lg font-bold text-emerald-400 mt-0.5">Óptimo</div>
+                    <div class="text-[11px] text-slate-500 mt-1" id="lastUpdateText">Esperando datos...</div>
+                </div>
+                <div id="statusIconContainer" class="w-12 h-12 rounded-xl bg-emerald-950/40 border border-emerald-800/40 flex items-center justify-center text-emerald-400 text-2xl">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4 SENSORS GRID CARDS & GAUGES -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            
+            <!-- Sensor 01: Temperatura -->
+            <div class="glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300 hover:translate-y-[-2px]">
+                <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-lg bg-wine-950/80 border border-wine-800/60 flex items-center justify-center text-wine-400">
+                            <i class="fa-solid fa-temperature-three-quarters text-sm"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold text-white">Temperatura</h3>
+                            <p class="text-[11px] font-mono text-slate-400">sensor01/temperatura</p>
+                        </div>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-wine-950 text-wine-300 border border-wine-900 font-semibold">Ideal: 12-18 °C</span>
+                </div>
+
+                <!-- Radial Gauge SVG -->
+                <div class="flex flex-col items-center justify-center my-2 relative">
+                    <svg class="w-36 h-36 transform -rotate-90" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="text-industrial-900" fill="transparent" />
+                        <circle id="gaugeTemp" cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="gauge-circle text-wine-600" fill="transparent" stroke-dasharray="301.59" stroke-dashoffset="301.59" stroke-linecap="round" />
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                        <span id="valTemp" class="text-3xl font-bold font-mono text-white tracking-tight">--</span>
+                        <span class="text-xs font-semibold text-slate-400">°C</span>
+                    </div>
+                </div>
+
+                <div class="flex justify-between items-center text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+                    <span>Mín: <strong id="minTemp" class="text-slate-300 font-mono">--</strong></span>
+                    <span>Máx: <strong id="maxTemp" class="text-slate-300 font-mono">--</strong></span>
+                </div>
+            </div>
+
+            <!-- Sensor 02: Humedad -->
+            <div class="glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300 hover:translate-y-[-2px]">
+                <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-lg bg-blue-950/80 border border-blue-800/60 flex items-center justify-center text-blue-400">
+                            <i class="fa-solid fa-droplet text-sm"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold text-white">Humedad Relativa</h3>
+                            <p class="text-[11px] font-mono text-slate-400">sensor02/humedad</p>
+                        </div>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-900 font-semibold">Ideal: 60-80 %</span>
+                </div>
+
+                <!-- Radial Gauge SVG -->
+                <div class="flex flex-col items-center justify-center my-2 relative">
+                    <svg class="w-36 h-36 transform -rotate-90" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="text-industrial-900" fill="transparent" />
+                        <circle id="gaugeHum" cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="gauge-circle text-blue-500" fill="transparent" stroke-dasharray="301.59" stroke-dashoffset="301.59" stroke-linecap="round" />
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                        <span id="valHum" class="text-3xl font-bold font-mono text-white tracking-tight">--</span>
+                        <span class="text-xs font-semibold text-slate-400">% RH</span>
+                    </div>
+                </div>
+
+                <div class="flex justify-between items-center text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+                    <span>Mín: <strong id="minHum" class="text-slate-300 font-mono">--</strong></span>
+                    <span>Máx: <strong id="maxHum" class="text-slate-300 font-mono">--</strong></span>
+                </div>
+            </div>
+
+            <!-- Sensor 03: CO2 -->
+            <div class="glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300 hover:translate-y-[-2px]">
+                <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-lg bg-emerald-950/80 border border-emerald-800/60 flex items-center justify-center text-emerald-400">
+                            <i class="fa-solid fa-wind text-sm"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold text-white">Nivel de CO2</h3>
+                            <p class="text-[11px] font-mono text-slate-400">sensor03/co2</p>
+                        </div>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-900 font-semibold">Max: 1200 ppm</span>
+                </div>
+
+                <!-- Radial Gauge SVG -->
+                <div class="flex flex-col items-center justify-center my-2 relative">
+                    <svg class="w-36 h-36 transform -rotate-90" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="text-industrial-900" fill="transparent" />
+                        <circle id="gaugeCO2" cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="gauge-circle text-emerald-500" fill="transparent" stroke-dasharray="301.59" stroke-dashoffset="301.59" stroke-linecap="round" />
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                        <span id="valCO2" class="text-2xl font-bold font-mono text-white tracking-tight">--</span>
+                        <span class="text-xs font-semibold text-slate-400">ppm</span>
+                    </div>
+                </div>
+
+                <div class="flex justify-between items-center text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+                    <span>Mín: <strong id="minCO2" class="text-slate-300 font-mono">--</strong></span>
+                    <span>Máx: <strong id="maxCO2" class="text-slate-300 font-mono">--</strong></span>
+                </div>
+            </div>
+
+            <!-- Sensor 04: Presión Barométrica -->
+            <div class="glass-card rounded-2xl p-5 relative overflow-hidden transition-all duration-300 hover:translate-y-[-2px]">
+                <div class="flex justify-between items-start mb-3">
+                    <div class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-lg bg-amber-950/80 border border-amber-800/60 flex items-center justify-center text-amber-400">
+                            <i class="fa-solid fa-gauge-high text-sm"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-semibold text-white">Presión Atmo.</h3>
+                            <p class="text-[11px] font-mono text-slate-400">sensor04/presion</p>
+                        </div>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-900 font-semibold">Standard: hPa</span>
+                </div>
+
+                <!-- Radial Gauge SVG -->
+                <div class="flex flex-col items-center justify-center my-2 relative">
+                    <svg class="w-36 h-36 transform -rotate-90" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="text-industrial-900" fill="transparent" />
+                        <circle id="gaugePres" cx="60" cy="60" r="48" stroke="currentColor" stroke-width="10" class="gauge-circle text-amber-500" fill="transparent" stroke-dasharray="301.59" stroke-dashoffset="301.59" stroke-linecap="round" />
+                    </svg>
+                    <div class="absolute inset-0 flex flex-col items-center justify-center text-center">
+                        <span id="valPres" class="text-2xl font-bold font-mono text-white tracking-tight">--</span>
+                        <span class="text-xs font-semibold text-slate-400">hPa</span>
+                    </div>
+                </div>
+
+                <div class="flex justify-between items-center text-xs text-slate-400 border-t border-slate-800/80 pt-3">
+                    <span>Mín: <strong id="minPres" class="text-slate-300 font-mono">--</strong></span>
+                    <span>Máx: <strong id="maxPres" class="text-slate-300 font-mono">--</strong></span>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- CHARTS & LIVE LOGS SECTION -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Realtime Telemetry Charts (2 Columns) -->
+            <div class="glass-card rounded-2xl p-5 lg:col-span-2 space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-chart-line text-wine-500"></i>
+                        <h3 class="text-sm font-bold text-white uppercase tracking-wider">Histórico de Telemetría Bodega</h3>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-wine-500 pulse-live"></span>
+                        <span class="text-xs text-slate-400 font-mono">Tiempo Real</span>
+                    </div>
+                </div>
+                <!-- Chart Canvas Container -->
+                <div class="relative h-72 w-full">
+                    <canvas id="realtimeChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Live MQTT Logs Console (1 Column) -->
+            <div class="glass-card rounded-2xl p-5 flex flex-col h-full min-h-[380px]">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-terminal text-wine-400"></i>
+                        <h3 class="text-sm font-bold text-white uppercase tracking-wider">Consola MQTT en Vivo</h3>
+                    </div>
+                    <button onclick="clearLogs()" class="text-xs text-slate-400 hover:text-wine-400 transition-colors px-2 py-1 rounded bg-industrial-900 border border-slate-800">
+                        <i class="fa-solid fa-trash-can mr-1"></i>Limpiar
+                    </button>
+                </div>
+
+                <!-- Logs Feed Container -->
+                <div id="mqttConsoleLog" class="flex-1 bg-industrial-950 rounded-xl p-3 font-mono text-[11px] overflow-y-auto space-y-2 border border-slate-900 max-h-[300px]">
+                    <div class="text-slate-500 italic">[SISTEMA] Listo para conectar con EMQX Cloud...</div>
+                </div>
+
+                <!-- Interactive Manual Publisher Box -->
+                <div class="mt-3 pt-3 border-t border-slate-800 space-y-2">
+                    <div class="text-[11px] font-semibold text-slate-400">Publicar Mensaje Manual (Prueba MQTT):</div>
+                    <div class="flex gap-2">
+                        <select id="manualSensorTopic" class="bg-industrial-900 border border-slate-700 text-xs text-slate-300 rounded-lg px-2 py-1.5 focus:outline-none focus:border-wine-500">
+                            <option value="sensor01/temperatura">Temperatura (°C)</option>
+                            <option value="sensor02/humedad">Humedad (%)</option>
+                            <option value="sensor03/co2">CO2 (ppm)</option>
+                            <option value="sensor04/presion">Presión (hPa)</option>
+                        </select>
+                        <input id="manualValueInput" type="number" step="0.1" placeholder="Valor" class="w-20 bg-industrial-900 border border-slate-700 text-xs text-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-wine-500 font-mono">
+                        <button onclick="sendManualPublish()" class="flex-1 bg-wine-800 hover:bg-wine-700 text-white text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors">
+                            <i class="fa-solid fa-paper-plane mr-1"></i>Enviar
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-900 bg-industrial-950 py-4 text-center text-xs text-slate-500">
+        <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+            <div>IoT Vinos Parry &copy; 2026 - Evaluación Integrada MQTT EMQX Cloud</div>
+            <div class="font-mono text-[11px] text-slate-600">v1.0.4 | WebSockets TLS 8084 | Paho/MQTT.js</div>
+        </div>
+    </footer>
+
+    <!-- LOGIC & APPLICATION CODE -->
+    <script>
+        // MQTT Connection Settings
+        const MQTT_CONFIG = {
+            host: 'udb16521.ala.us-east-1.emqxsl.com',
+            port: 8084, // WebSocket SSL port
+            path: '/mqtt',
+            username: 'vinospsensor',
+            password: 'vinospsensor2026',
+            topicBase: 'vinosparry/bodega01'
+        };
+
+        // State Variables
+        let mqttClient = null;
+        let isConnected = false;
+        let simulatorInterval = null;
+        let isSimulatorActive = false;
+
+        // Min Max Trackers
+        const sensorStats = {
+            temp: { min: Infinity, max: -Infinity, last: null },
+            hum: { min: Infinity, max: -Infinity, last: null },
+            co2: { min: Infinity, max: -Infinity, last: null },
+            pres: { min: Infinity, max: -Infinity, last: null }
+        };
+
+        // Chart.js Instance & Config
+        let realtimeChart;
+        const maxChartPoints = 15;
+
+        // Initialize App on DOM Ready
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            // Automatically attempt connection on startup
+            connectMQTT();
+        });
+
+        // Initialize Realtime Telemetry Chart
+        function initChart() {
+            const ctx = document.getElementById('realtimeChart').getContext('2d');
+            realtimeChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Temperatura (°C)',
+                            data: [],
+                            borderColor: '#bf3456',
+                            backgroundColor: 'rgba(191, 52, 86, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: true,
+                            yAxisID: 'yTemp'
+                        },
+                        {
+                            label: 'Humedad (%)',
+                            data: [],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.05)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            fill: false,
+                            yAxisID: 'yHum'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 400 },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#94a3b8', font: { family: 'Inter', size: 11 } }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 } }
+                        },
+                        yTemp: {
+                            type: 'linear',
+                            position: 'left',
+                            title: { display: true, text: 'Temp (°C)', color: '#bf3456', font: { size: 11 } },
+                            min: 5,
+                            max: 30,
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#94a3b8' }
+                        },
+                        yHum: {
+                            type: 'linear',
+                            position: 'right',
+                            title: { display: true, text: 'Humedad (%)', color: '#3b82f6', font: { size: 11 } },
+                            min: 40,
+                            max: 100,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Connect to EMQX Cloud via MQTT over WebSockets
+        function connectMQTT() {
+            updateStatusBadge('connecting', 'Conectando...');
+            logConsole('SYSTEM', `Iniciando conexión WebSocket a wss://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}${MQTT_CONFIG.path}`);
+
+            const clientId = 'WebDashboard_' + Math.random().toString(16).substr(2, 8);
+            const connectUrl = `wss://${MQTT_CONFIG.host}:${MQTT_CONFIG.port}${MQTT_CONFIG.path}`;
+
+            const options = {
+                keepalive: 60,
+                clientId: clientId,
+                protocolId: 'MQTT',
+                protocolVersion: 4,
+                clean: true,
+                reconnectPeriod: 5000,
+                connectTimeout: 30 * 1000,
+                username: MQTT_CONFIG.username,
+                password: MQTT_CONFIG.password,
+                rejectUnauthorized: false
+            };
+
+            try {
+                mqttClient = mqtt.connect(connectUrl, options);
+
+                mqttClient.on('connect', () => {
+                    isConnected = true;
+                    updateStatusBadge('connected', 'Conectado EMQX');
+                    logConsole('MQTT', `[+] Conexión exitosa a EMQX Cloud como "${clientId}"`);
+                    
+                    // Subscribe to base topic
+                    const topicFilter = `${MQTT_CONFIG.topicBase}/#`;
+                    mqttClient.subscribe(topicFilter, (err) => {
+                        if (!err) {
+                            logConsole('MQTT', `[+] Suscrito correctamente al tópico: ${topicFilter}`);
+                        } else {
+                            logConsole('ERROR', `[-] Falló suscripción: ${err.message}`);
+                        }
+                    });
+                });
+
+                mqttClient.on('message', (topic, message) => {
+                    handleIncomingMQTTMessage(topic, message.toString());
+                });
+
+                mqttClient.on('error', (err) => {
+                    logConsole('ERROR', `Error MQTT: ${err.message || err}`);
+                    updateStatusBadge('disconnected', 'Error Conexión');
+                });
+
+                mqttClient.on('close', () => {
+                    if (isConnected) {
+                        isConnected = false;
+                        updateStatusBadge('disconnected', 'Desconectado');
+                        logConsole('SYSTEM', 'Conexión MQTT cerrada.');
+                    }
+                });
+
+            } catch (error) {
+                logConsole('ERROR', `Excepción de Conexión: ${error.message}`);
+                updateStatusBadge('disconnected', 'Error');
+            }
+        }
+
+        // Toggle Connection via Button
+        function toggleMQTTConnection() {
+            if (isConnected) {
+                if (mqttClient) mqttClient.end();
+                isConnected = false;
+                updateStatusBadge('disconnected', 'Desconectado');
+                logConsole('SYSTEM', 'Desconectado manualmente.');
+            } else {
+                connectMQTT();
+            }
+        }
+
+        // Handle and Parse Received MQTT Messages
+        function handleIncomingMQTTMessage(topic, payloadStr) {
+            const timeStr = new Date().toLocaleTimeString();
+            logConsole('PUB', `${topic} -> ${payloadStr}`);
+
+            let value = null;
+            try {
+                const parsed = JSON.parse(payloadStr);
+                value = parsed.valor !== undefined ? parsed.valor : parsed.val;
+            } catch (e) {
+                // If payload is plain number
+                value = parseFloat(payloadStr);
+            }
+
+            if (value === null || isNaN(value)) return;
+
+            // Route to appropriate sensor gauge
+            if (topic.includes('sensor01/temperatura')) {
+                updateSensorGauge('temp', value, 0, 40, 'valTemp', 'gaugeTemp', 'minTemp', 'maxTemp');
+                updateChartData(timeStr, value, null);
+            } else if (topic.includes('sensor02/humedad')) {
+                updateSensorGauge('hum', value, 0, 100, 'valHum', 'gaugeHum', 'minHum', 'maxHum');
+                updateChartData(timeStr, null, value);
+            } else if (topic.includes('sensor03/co2')) {
+                updateSensorGauge('co2', value, 0, 2000, 'valCO2', 'gaugeCO2', 'minCO2', 'maxCO2');
+            } else if (topic.includes('sensor04/presion')) {
+                updateSensorGauge('pres', value, 900, 1100, 'valPres', 'gaugePres', 'minPres', 'maxPres');
+            }
+
+            evaluateBodegaHealth();
+            document.getElementById('lastUpdateText').innerText = `Último dato: ${timeStr}`;
+        }
+
+        // Update Gauge Graphics & Min/Max
+        function updateSensorGauge(type, val, minRange, maxRange, valElemId, gaugeElemId, minElemId, maxElemId) {
+            // Update Text
+            document.getElementById(valElemId).innerText = val;
+
+            // Update Stats
+            const stat = sensorStats[type];
+            if (val < stat.min) stat.min = val;
+            if (val > stat.max) stat.max = val;
+            stat.last = val;
+
+            document.getElementById(minElemId).innerText = stat.min;
+            document.getElementById(maxElemId).innerText = stat.max;
+
+            // Update Gauge SVG Circle Offset (Radius = 48 -> Perimeter = 2 * PI * 48 = 301.59)
+            const perimeter = 301.59;
+            const clampedVal = Math.max(minRange, Math.min(maxRange, val));
+            const percentage = (clampedVal - minRange) / (maxRange - minRange);
+            const offset = perimeter - (percentage * perimeter);
+
+            const circle = document.getElementById(gaugeElemId);
+            if (circle) {
+                circle.style.strokeDashoffset = offset;
+            }
+        }
+
+        // Push New Data into Chart.js
+        function updateChartData(labelTime, tempVal, humVal) {
+            const labels = realtimeChart.data.labels;
+            const tempDataset = realtimeChart.data.datasets[0].data;
+            const humDataset = realtimeChart.data.datasets[1].data;
+
+            if (labels.length >= maxChartPoints) {
+                labels.shift();
+                tempDataset.shift();
+                humDataset.shift();
+            }
+
+            labels.push(labelTime);
+
+            // Maintain last value if one parameter was updated
+            const lastTemp = tempVal !== null ? tempVal : (tempDataset.length > 0 ? tempDataset[tempDataset.length - 1] : null);
+            const lastHum = humVal !== null ? humVal : (humDataset.length > 0 ? humDataset[humDataset.length - 1] : null);
+
+            tempDataset.push(lastTemp);
+            humDataset.push(lastHum);
+
+            realtimeChart.update('none');
+        }
+
+        // Evaluate overall environmental health of the wine cellar
+        function evaluateBodegaHealth() {
+            const temp = sensorStats.temp.last;
+            const hum = sensorStats.hum.last;
+            const co2 = sensorStats.co2.last;
+
+            const statusText = document.getElementById('bodegaStatusText');
+            const iconContainer = document.getElementById('statusIconContainer');
+
+            let isWarning = false;
+            let isDanger = false;
+
+            if (temp && (temp < 10 || temp > 20)) isWarning = true;
+            if (temp && (temp < 5 || temp > 25)) isDanger = true;
+            if (hum && (hum < 50 || hum > 85)) isWarning = true;
+            if (co2 && co2 > 1300) isWarning = true;
+
+            if (isDanger) {
+                statusText.innerText = "Alarma Crítica";
+                statusText.className = "text-lg font-bold text-wine-500 mt-0.5";
+                iconContainer.className = "w-12 h-12 rounded-xl bg-wine-950/80 border border-wine-600 flex items-center justify-center text-wine-400 text-2xl pulse-live";
+                iconContainer.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i>`;
+            } else if (isWarning) {
+                statusText.innerText = "Precaución";
+                statusText.className = "text-lg font-bold text-amber-400 mt-0.5";
+                iconContainer.className = "w-12 h-12 rounded-xl bg-amber-950/40 border border-amber-800/40 flex items-center justify-center text-amber-400 text-2xl";
+                iconContainer.innerHTML = `<i class="fa-solid fa-circle-exclamation"></i>`;
+            } else {
+                statusText.innerText = "Óptimo";
+                statusText.className = "text-lg font-bold text-emerald-400 mt-0.5";
+                iconContainer.className = "w-12 h-12 rounded-xl bg-emerald-950/40 border border-emerald-800/40 flex items-center justify-center text-emerald-400 text-2xl";
+                iconContainer.innerHTML = `<i class="fa-solid fa-shield-halved"></i>`;
+            }
+        }
+
+        // Console Log Helper
+        function logConsole(tag, msg) {
+            const consoleBox = document.getElementById('mqttConsoleLog');
+            const timestamp = new Date().toLocaleTimeString();
+            
+            let tagColor = 'text-slate-400';
+            if (tag === 'PUB') tagColor = 'text-wine-400 font-semibold';
+            if (tag === 'MQTT') tagColor = 'text-emerald-400 font-semibold';
+            if (tag === 'ERROR') tagColor = 'text-red-400 font-semibold';
+            if (tag === 'SYSTEM') tagColor = 'text-blue-400';
+
+            const logLine = document.createElement('div');
+            logLine.className = 'border-b border-slate-900/60 pb-1 flex gap-2';
+            logLine.innerHTML = `
+                <span class="text-slate-600 select-none">[${timestamp}]</span>
+                <span class="${tagColor}">[${tag}]</span>
+                <span class="text-slate-300 break-all">${msg}</span>
+            `;
+
+            consoleBox.appendChild(logLine);
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('mqttConsoleLog').innerHTML = '<div class="text-slate-500 italic">[SISTEMA] Logs limpiados.</div>';
+        }
+
+        // Update UI Badge
+        function updateStatusBadge(status, text) {
+            const badge = document.getElementById('connectionStatusBadge');
+            const dot = document.getElementById('statusDot');
+            const txt = document.getElementById('statusText');
+            const btn = document.getElementById('connectBtn');
+
+            txt.innerText = text;
+
+            if (status === 'connected') {
+                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-950/60 border border-emerald-800 text-xs font-medium text-emerald-400";
+                dot.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 pulse-live";
+                btn.innerHTML = `<i class="fa-solid fa-plug-circle-xmark text-xs"></i><span>Desconectar</span>`;
+                btn.className = "px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all flex items-center gap-1.5 border border-slate-700";
+            } else if (status === 'connecting') {
+                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-950/60 border border-amber-800 text-xs font-medium text-amber-400";
+                dot.className = "w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping";
+            } else {
+                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-700 text-xs font-medium text-slate-400";
+                dot.className = "w-2.5 h-2.5 rounded-full bg-slate-500";
+                btn.innerHTML = `<i class="fa-solid fa-plug text-xs"></i><span>Conectar Broker</span>`;
+                btn.className = "px-3.5 py-1.5 rounded-lg bg-wine-700 hover:bg-wine-600 text-white text-xs font-semibold shadow-md shadow-wine-950/40 transition-all flex items-center gap-1.5";
+            }
+        }
+
+        // Built-in Browser Simulator
+        function toggleSimulator() {
+            const btn = document.getElementById('simulatorBtn');
+            const icon = document.getElementById('simIcon');
+            const text = document.getElementById('simText');
+
+            if (isSimulatorActive) {
+                clearInterval(simulatorInterval);
+                isSimulatorActive = false;
+                text.innerText = "Iniciar Simulación";
+                icon.className = "fa-solid fa-play text-wine-400 text-xs";
+                btn.className = "px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-all flex items-center gap-1 border border-slate-700";
+                logConsole('SYSTEM', 'Simulador local detenido.');
+            } else {
+                isSimulatorActive = true;
+                text.innerText = "Detener Simulación";
+                icon.className = "fa-solid fa-stop text-red-400 text-xs";
+                btn.className = "px-3 py-1.5 rounded-lg bg-wine-950 border border-wine-700 text-wine-300 text-xs font-medium transition-all flex items-center gap-1";
+                logConsole('SYSTEM', 'Simulador local iniciado (Envío cada 4s)...');
+
+                // Generate telemetry ticks
+                simulatorInterval = setInterval(() => {
+                    const sampleData = [
+                        { sub: 'sensor01/temperatura', val: (12 + Math.random() * 5).toFixed(2), unit: 'temperatura' },
+                        { sub: 'sensor02/humedad', val: (60 + Math.random() * 20).toFixed(2), unit: 'humedad' },
+                        { sub: 'sensor03/co2', val: (400 + Math.floor(Math.random() * 700)), unit: 'co2' },
+                        { sub: 'sensor04/presion', val: (1008 + Math.random() * 7).toFixed(2), unit: 'presion' }
+                    ];
+
+                    sampleData.forEach(item => {
+                        const fullTopic = `${MQTT_CONFIG.topicBase}/${item.sub}`;
+                        const payload = JSON.stringify({ valor: parseFloat(item.val), unidad: item.unit });
+                        
+                        if (isConnected && mqttClient) {
+                            mqttClient.publish(fullTopic, payload);
+                        } else {
+                            // Local fallback if MQTT isn't connected
+                            handleIncomingMQTTMessage(fullTopic, payload);
+                        }
+                    });
+                }, 4000);
+            }
+        }
+
+        // Manual Single Publish Command
+        function sendManualPublish() {
+            const subTopic = document.getElementById('manualSensorTopic').value;
+            const inputVal = document.getElementById('manualValueInput').value;
+
+            if (!inputVal) return;
+
+            const fullTopic = `${MQTT_CONFIG.topicBase}/${subTopic}`;
+            const payload = JSON.stringify({ valor: parseFloat(inputVal), unidad: subTopic.split('/')[1] });
+
+            if (isConnected && mqttClient) {
+                mqttClient.publish(fullTopic, payload);
+                logConsole('SYSTEM', `[Mensaje Manual Enviado] -> ${fullTopic}`);
+            } else {
+                handleIncomingMQTTMessage(fullTopic, payload);
+                logConsole('SYSTEM', `[Prueba Local Aplicada] -> ${fullTopic}`);
+            }
+
+            document.getElementById('manualValueInput').value = '';
+        }
+    </script>
+</body>
+</html>
